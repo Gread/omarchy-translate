@@ -27,6 +27,9 @@ Panel {
   readonly property var names: ({ sv: "Svenska", pt: "Português", en: "English" })
   readonly property var flags: ({ sv: "🇸🇪", pt: "🇧🇷", en: "🇬🇧" })
 
+  // "auto" or a language code; toLang "" means both other languages.
+  property string fromLang: "auto"
+  property string toLang: ""
   property string source: ""
   property var results: []          // [{ lang, text }]
   property string errorText: ""
@@ -75,8 +78,38 @@ Panel {
     }
     root.pending = ""
     root.busy = true
-    translateProc.command = ["timeout", "-k", "2", "20", "bash", root.script, text]
+    var args = ["--from", root.fromLang]
+    if (root.toLang !== "") args = args.concat(["--to", root.toLang])
+    translateProc.command = ["timeout", "-k", "2", "20", "bash", root.script].concat(args).concat([text])
     translateProc.running = true
+  }
+
+  function setFrom(code) {
+    if (root.fromLang === code) return
+    root.fromLang = code
+    if (code !== "auto" && root.toLang === code) root.toLang = ""
+    root.translate()
+  }
+
+  function setTo(code) {
+    if (root.toLang === code) return
+    root.toLang = code
+    if (code !== "" && root.fromLang === code) root.fromLang = "auto"
+    root.translate()
+  }
+
+  // Like Google Translate's ⇄: the translation becomes the text, and the
+  // languages trade places.
+  function swap() {
+    var from = root.fromLang === "auto" ? root.source : root.fromLang
+    var to = root.toLang !== "" ? root.toLang : (root.results.length > 0 ? root.results[0].lang : "")
+    if (!to) return
+    var result = ""
+    for (var i = 0; i < root.results.length; i++) if (root.results[i].lang === to) result = root.results[i].text
+    root.fromLang = to
+    root.toLang = (from && root.names[from]) ? from : ""
+    if (result !== "") input.text = result
+    root.translate()
   }
 
   function copy(entry) {
@@ -199,6 +232,40 @@ Panel {
           }
         }
 
+        // ---- From → To
+        Row {
+          width: root.innerWidth
+          spacing: Style.space(4)
+
+          Repeater {
+            model: [{ code: "auto", label: "Auto" }, { code: "sv", label: "SV" }, { code: "pt", label: "PT" }, { code: "en", label: "EN" }]
+            Chip {
+              required property var modelData
+              label: modelData.code === "auto" && root.fromLang === "auto" && root.source !== ""
+                ? "Auto · " + root.source.toUpperCase() : modelData.label
+              active: root.fromLang === modelData.code
+              onClicked: root.setFrom(modelData.code)
+            }
+          }
+
+          Chip {
+            label: "⇄"
+            hint: "Swap (Alt+X)"
+            onClicked: root.swap()
+          }
+
+          Repeater {
+            model: [{ code: "", label: "Both", key: "Alt+A" }, { code: "sv", label: "SV", key: "Alt+S" }, { code: "pt", label: "PT", key: "Alt+P" }, { code: "en", label: "EN", key: "Alt+E" }]
+            Chip {
+              required property var modelData
+              label: modelData.label
+              hint: modelData.key
+              active: root.toLang === modelData.code
+              onClicked: root.setTo(modelData.code)
+            }
+          }
+        }
+
         // ---- Input
         Rectangle {
           width: root.innerWidth
@@ -225,8 +292,15 @@ Panel {
               padding: Style.space(8)
               onTextChanged: debounce.restart()
 
-              // Esc reaches the panel; Ctrl+Enter copies the first translation.
+              // Esc closes; Ctrl+Enter copies the first translation;
+              // Alt+S/P/E picks the target language, Alt+A both, Alt+X swaps.
               Keys.onPressed: function(event) {
+                if (event.modifiers & Qt.AltModifier) {
+                  var keys = { "s": "sv", "p": "pt", "e": "en", "a": "" }
+                  var k = event.text.toLowerCase() || String.fromCharCode(event.key).toLowerCase()
+                  if (k in keys) { root.setTo(keys[k]); event.accepted = true; return }
+                  if (k === "x") { root.swap(); event.accepted = true; return }
+                }
                 if (event.key === Qt.Key_Escape) {
                   root.close()
                   event.accepted = true
@@ -245,7 +319,7 @@ Panel {
           text: root.busy ? "Translating…"
             : root.errorText !== "" ? root.errorText
             : root.source !== "" ? "From " + root.languageName(root.source) + " · click to copy · Ctrl+Enter copies the first"
-            : "Opens with the selected text. Esc closes."
+            : "Opens with the selected text · Alt+S/P/E target · Alt+X swap · Esc closes"
           color: root.errorText !== "" ? Color.urgent : root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -303,6 +377,45 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  component Chip: Rectangle {
+    id: chip
+    property string label: ""
+    property string hint: ""
+    property bool active: false
+    signal clicked()
+
+    width: chipText.implicitWidth + Style.space(14)
+    height: Style.space(26)
+    radius: Style.cornerRadius
+    color: chip.active ? Style.hoverFillFor(root.fg, Color.accent)
+      : (chipArea.containsMouse ? Qt.alpha(root.fg, 0.10) : "transparent")
+    border.width: 1
+    border.color: chip.active ? Color.accent : Qt.alpha(root.fg, 0.18)
+
+    Text {
+      id: chipText
+      anchors.centerIn: parent
+      text: chip.label
+      color: chip.active ? Style.hoverStateColor(root.fg, Color.accent) : root.fg
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+
+    MouseArea {
+      id: chipArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: chip.clicked()
+    }
+
+    PanelToolTip {
+      visible: chip.hint !== "" && chipArea.containsMouse
+      text: chip.hint
+      fontFamily: root.fontFamily
     }
   }
 }

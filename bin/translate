@@ -2,7 +2,9 @@
 # Translate a short text into the other two of Swedish, Portuguese and English
 # (all three when it is in some other language), with Google Translate.
 #
-# Usage: translate "<text>"     prints {"source":"sv","results":{"pt":"…","en":"…"}}
+# Usage: translate [--from xx] [--to xx] "<text>"
+#            prints {"source":"sv","results":{"pt":"…","en":"…"}}; --from skips
+#            detection, --to asks for that language only
 #        translate selection    prints the primary selection (what is selected)
 #
 # Errors go to stderr as one word: empty, too_long, network, blocked.
@@ -16,11 +18,14 @@ die() {
   exit 1
 }
 
+FROM=auto
+TO=""
+
 # One request: prints "translation<TAB>detected source".
 request() {
   local target="$1" text="$2" out
   out=$(curl -s --max-time 8 -A "Mozilla/5.0" -G "https://clients5.google.com/translate_a/t" \
-    --data-urlencode "client=dict-chrome-ex" --data-urlencode "sl=auto" \
+    --data-urlencode "client=dict-chrome-ex" --data-urlencode "sl=$FROM" \
     --data-urlencode "tl=$target" --data-urlencode "q=$text") || die network
   jq -er '.[0] | if type == "array" then "\(.[0])\t\(.[1])" else "\(.)\tauto" end' <<<"$out" 2>/dev/null || die blocked
 }
@@ -30,9 +35,18 @@ translate() {
   [[ -n ${text//[[:space:]]/} ]] || die empty
   ((${#text} <= MAX)) || die too_long
 
+  if [[ -n $TO ]]; then
+    first=$(request "$TO" "$text") || exit 1
+    source=${first#*$'\t'}
+    [[ $FROM != auto ]] && source=$FROM
+    jq -cn --arg s "$source" --arg t "$TO" --arg r "${first%%$'\t'*}" '{source: $s, results: {($t): $r}}'
+    return
+  fi
+
   # Asking for Portuguese also tells the source language.
   first=$(request pt "$text") || exit 1
   source=${first#*$'\t'}
+  [[ $FROM != auto ]] && source=$FROM
   json=$(jq -n --arg s "$source" '{source: $s, results: {}}')
   for target in "${LANGS[@]}"; do
     [[ $target == "$source" ]] && continue
@@ -46,6 +60,15 @@ translate() {
   done
   jq -c . <<<"$json"
 }
+
+while (($#)); do
+  case "$1" in
+    --from) FROM="${2:-auto}"; shift 2 ;;
+    --to) TO="${2:-}"; shift 2 ;;
+    *) break ;;
+  esac
+done
+[[ $FROM =~ ^(auto|sv|pt|en)$ && $TO =~ ^(|sv|pt|en)$ ]] || die invalid
 
 case "${1:-}" in
   selection) wl-paste --primary --no-newline 2>/dev/null | head -c 4000 ;;
