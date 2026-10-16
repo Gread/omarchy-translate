@@ -1,0 +1,53 @@
+#!/bin/bash
+# Translate a short text into the other two of Swedish, Portuguese and English
+# (all three when it is in some other language), with Google Translate.
+#
+# Usage: translate "<text>"     prints {"source":"sv","results":{"pt":"…","en":"…"}}
+#        translate selection    prints the primary selection (what is selected)
+#
+# Errors go to stderr as one word: empty, too_long, network, blocked.
+set -uo pipefail
+
+LANGS=(sv pt en)
+MAX=1500
+
+die() {
+  echo "$1" >&2
+  exit 1
+}
+
+# One request: prints "translation<TAB>detected source".
+request() {
+  local target="$1" text="$2" out
+  out=$(curl -s --max-time 8 -A "Mozilla/5.0" -G "https://clients5.google.com/translate_a/t" \
+    --data-urlencode "client=dict-chrome-ex" --data-urlencode "sl=auto" \
+    --data-urlencode "tl=$target" --data-urlencode "q=$text") || die network
+  jq -er '.[0] | if type == "array" then "\(.[0])\t\(.[1])" else "\(.)\tauto" end' <<<"$out" 2>/dev/null || die blocked
+}
+
+translate() {
+  local text="$1" first source target result json
+  [[ -n ${text//[[:space:]]/} ]] || die empty
+  ((${#text} <= MAX)) || die too_long
+
+  # Asking for Portuguese also tells the source language.
+  first=$(request pt "$text") || exit 1
+  source=${first#*$'\t'}
+  json=$(jq -n --arg s "$source" '{source: $s, results: {}}')
+  for target in "${LANGS[@]}"; do
+    [[ $target == "$source" ]] && continue
+    if [[ $target == pt ]]; then
+      result=${first%%$'\t'*}
+    else
+      result=$(request "$target" "$text") || exit 1
+      result=${result%%$'\t'*}
+    fi
+    json=$(jq --arg t "$target" --arg r "$result" '.results[$t] = $r' <<<"$json")
+  done
+  jq -c . <<<"$json"
+}
+
+case "${1:-}" in
+  selection) wl-paste --primary --no-newline 2>/dev/null | head -c 4000 ;;
+  *) translate "${1:-}" ;;
+esac

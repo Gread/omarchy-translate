@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "gread.translate",
+  "name": "Translate",
+  "version": "0.1.0",
+  "author": "Gread",
+  "license": "MIT",
+  "description": "Quick translations between Swedish, Portuguese and English from the bar",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Translate",
+    "description": "Type or select a short text and see it in the other two languages; click to copy",
+    "category": "Info",
+    "aliases": [
+      "translate",
+      "translation",
+      "tradução",
+      "översätt"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
